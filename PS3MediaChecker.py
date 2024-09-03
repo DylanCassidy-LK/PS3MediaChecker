@@ -41,13 +41,20 @@ def get_file_info(file_path):
     except subprocess.CalledProcessError:
         return None, None, None
 
-def is_ps3_supported(video_codec, audio_codec, resolution):
-    """Check if the file is PS3 supported based on codec and resolution."""
+def is_ps3_supported(file_path, video_codec, audio_codec, resolution):
+    """Check if the file is PS3 supported based on file extension, codec, and resolution."""
+    # Check file extension
+    if not file_path.lower().endswith(('.mp4', '.avi', '.mpeg', '.m2ts')):
+        return False
+
+    # Existing codec and resolution checks
     if video_codec in ['h264', 'mpeg4'] and audio_codec == 'aac':
         width, height = map(int, resolution.split('x'))
         if width <= 1920 and height <= 1080:
             return True
+
     return False
+
 
 def get_video_duration(file_path):
     """Get the duration of the video file in seconds using ffprobe."""
@@ -154,7 +161,7 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
     for i, file_path in enumerate(files):
         video_codec, audio_codec, resolution = get_file_info(file_path)
         if video_codec and audio_codec and resolution:
-            if is_ps3_supported(video_codec, audio_codec, resolution):
+            if is_ps3_supported(file_path, video_codec, audio_codec, resolution):
                 supported_files.append(file_path)
             else:
                 unsupported_files.append(file_path)
@@ -200,9 +207,12 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
 
     # After scanning, provide feedback and the option to view detailed logs
     text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
-
+    
+    # Using grid for the details button instead of pack
     details_button = ttk.Button(frame, text="View Details", command=lambda: show_details(detailed_logs))
     details_button.grid(row=5, column=0, columnspan=2, pady=10, sticky="ew")
+
+
 
 def show_details(details):
     """Show detailed logs in a new window."""
