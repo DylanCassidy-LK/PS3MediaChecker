@@ -1,5 +1,7 @@
 import os
 import subprocess
+import threading
+import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -47,16 +49,86 @@ def is_ps3_supported(video_codec, audio_codec, resolution):
             return True
     return False
 
-def convert_to_ps3_compatible(input_file, output_file):
-    """Convert a file to a PS3-compatible format using ffmpeg."""
+def get_video_duration(file_path):
+    """Get the duration of the video file in seconds using ffprobe."""
     try:
-        subprocess.run(
+        duration_str = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
+        ).decode().strip()
+        return float(duration_str)
+    except subprocess.CalledProcessError:
+        return None
+
+def convert_to_ps3_compatible(input_file, output_file, progress_callback=None):
+    """Convert a file to a PS3-compatible format using ffmpeg."""
+    duration = get_video_duration(input_file)
+    if duration is None:
+        return False
+    
+    try:
+        process = subprocess.Popen(
             ["ffmpeg", "-i", input_file, "-vcodec", "h264", "-acodec", "aac", output_file],
-            check=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True
         )
-        return True
+
+        # Monitor progress
+        for line in process.stdout:
+            if progress_callback:
+                # Extract time from the output
+                time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
+                if time_match:
+                    hours, minutes, seconds, _ = map(int, time_match.groups())
+                    elapsed_time = hours * 3600 + minutes * 60 + seconds
+                    progress = elapsed_time / duration
+                    progress_callback(progress)
+
+        process.wait()
+
+        if process.returncode == 0:
+            return True
+        else:
+            return False
     except subprocess.CalledProcessError:
         return False
+
+
+def update_progress_bar(progress_bar, progress):
+    """Update the progress bar with the given progress value (0 to 1)."""
+    progress_bar.after(0, lambda: progress_bar.config(value=progress * 100))
+
+
+
+def start_conversion_thread(files_to_convert, text_widget, progress_bar):
+    """Start a thread to handle file conversion."""
+    def conversion_task():
+        for i, file_path in enumerate(files_to_convert):
+            output_file = os.path.splitext(file_path)[0] + "_ps3.mp4"
+            
+            # Check if the converted file already exists
+            if os.path.exists(output_file):
+                text_widget.insert(tk.END, f"Skipping: {file_path} (already converted)\n", "skip")
+                continue
+            
+            text_widget.insert(tk.END, f"Converting: {file_path}\n", "convert" , " This may take a while.")
+            
+            if convert_to_ps3_compatible(file_path, output_file, lambda p: update_progress_bar(progress_bar, p)):
+                text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert")
+                text_widget.insert(tk.END, f"Converted file located at: {output_file}\n", "convert")
+            else:
+                text_widget.insert(tk.END, f"Failed to convert: {file_path}\n", "error")
+
+            text_widget.yview(tk.END)
+            text_widget.update()
+
+            progress_bar["value"] = 0  # Reset for the next file
+
+        text_widget.insert(tk.END, "\nConversion Complete!\n", "complete")
+        text_widget.yview(tk.END)
+
+    conversion_thread = threading.Thread(target=conversion_task)
+    conversion_thread.start()
 
 def scan_folder(folder_path, text_widget, progress_bar, convert=False):
     """Scan folder for PS3 compatible videos and optionally convert unsupported ones."""
@@ -83,13 +155,6 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
                 supported_files.append(file_path)
             else:
                 unsupported_files.append(file_path)
-                if convert:
-                    output_file = os.path.splitext(file_path)[0] + "_ps3.mp4"
-                    if convert_to_ps3_compatible(file_path, output_file):
-                        text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert")
-                        supported_files.append(output_file)
-                    else:
-                        text_widget.insert(tk.END, f"Failed to convert: {file_path}\n", "error")
         else:
             failed_files.append(file_path)
 
@@ -102,6 +167,13 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
         # Update the progress bar
         progress_bar["value"] = i + 1
         progress_bar.update()
+
+    # Notify user about unsupported files before conversion
+    if unsupported_files and convert:
+        text_widget.insert(tk.END, "\nUnsupported files found! Starting conversion...\n", "convert")
+        text_widget.yview(tk.END)
+        text_widget.update()
+        start_conversion_thread(unsupported_files, text_widget, progress_bar)
 
     # Clear the processing output
     text_widget.delete(1.0, tk.END)
@@ -125,10 +197,9 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
 
     # After scanning, provide feedback and the option to view detailed logs
     text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
-    root.bell()  # Play a sound
 
-    details_button = ttk.Button(text_widget, text="View Details", command=lambda: show_details(detailed_logs))
-    details_button.pack(pady=10)
+    details_button = ttk.Button(frame, text="View Details", command=lambda: show_details(detailed_logs))
+    details_button.grid(row=5, column=0, columnspan=2, pady=10, sticky="ew")
 
 def show_details(details):
     """Show detailed logs in a new window."""
@@ -149,10 +220,10 @@ def create_gui():
     if not check_ffmpeg_installed():
         return
     
-    global root  # Make root accessible to the scan_folder function
+    global root, frame  # Make root accessible to the scan_folder function
     root = tk.Tk()
     root.title("PS3 Video Compatibility Checker")
-    root.geometry("700x500")  # Set a default window size
+    root.geometry("860x600")  # Set a wider default window size
     root.resizable(True, True)  # Allow the window to be resizable
 
     style = ttk.Style()
@@ -165,23 +236,27 @@ def create_gui():
               background=[('!disabled', '#3498db'), ('active', '#2980b9')])
 
     frame = ttk.Frame(root, padding=20)
-    frame.pack(padx=10, pady=10, expand=True, fill=tk.BOTH)
+    frame.grid(row=0, column=0, sticky="nsew")
+
+    root.grid_rowconfigure(0, weight=1)
+    root.grid_columnconfigure(0, weight=1)
+    frame.grid_rowconfigure(3, weight=1)
 
     label = ttk.Label(frame, text="PS3 Video Compatibility Checker")
-    label.pack(pady=10)
+    label.grid(row=0, column=0, columnspan=2, pady=10, sticky="ew")
 
     convert_var = tk.BooleanVar()
     convert_checkbox = ttk.Checkbutton(frame, text="Convert Unsupported Files", variable=convert_var)
-    convert_checkbox.pack(pady=10)
+    convert_checkbox.grid(row=1, column=0, columnspan=2, pady=10, sticky="ew")
 
     select_button = ttk.Button(frame, text="Select Folder", command=lambda: select_folder(text_widget, progress_bar, convert_var.get()))
-    select_button.pack(pady=10)
+    select_button.grid(row=2, column=0, columnspan=2, pady=10, sticky="ew")
 
-    text_widget = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=60, height=20, bg="#34495e", fg="#ecf0f1")
-    text_widget.pack(pady=10, expand=True, fill=tk.BOTH)
+    text_widget = scrolledtext.ScrolledText(frame, wrap=tk.WORD, bg="#34495e", fg="#ecf0f1")
+    text_widget.grid(row=3, column=0, columnspan=2, pady=10, sticky="nsew")
 
     progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate")
-    progress_bar.pack(pady=10, fill=tk.X)
+    progress_bar.grid(row=4, column=0, columnspan=2, pady=10, sticky="ew")
     
     # Add custom tags for success and error messages
     text_widget.tag_configure("success", foreground="#1abc9c")
@@ -189,6 +264,7 @@ def create_gui():
     text_widget.tag_configure("summary", font=("Helvetica", 12, "bold"), foreground="#ecf0f1")
     text_widget.tag_configure("complete", font=("Helvetica", 12, "bold"), foreground="#2ecc71")
     text_widget.tag_configure("convert", font=("Helvetica", 12, "bold"), foreground="#f1c40f")
+    text_widget.tag_configure("skip", foreground="#f39c12")
 
     root.configure(background="#2c3e50")
     root.mainloop()
