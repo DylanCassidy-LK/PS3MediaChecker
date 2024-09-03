@@ -99,23 +99,26 @@ def update_progress_bar(progress_bar, progress):
     progress_bar.after(0, lambda: progress_bar.config(value=progress * 100))
 
 
-
 def start_conversion_thread(files_to_convert, text_widget, progress_bar):
     """Start a thread to handle file conversion."""
     def conversion_task():
         for i, file_path in enumerate(files_to_convert):
             output_file = os.path.splitext(file_path)[0] + "_ps3.mp4"
             
+         
+            text_widget.tag_configure("convert_blue", font=("Helvetica", 12, "bold"), foreground="#3498db")
+
             # Check if the converted file already exists
             if os.path.exists(output_file):
                 text_widget.insert(tk.END, f"Skipping: {file_path} (already converted)\n", "skip")
                 continue
-            
-            text_widget.insert(tk.END, f"Converting: {file_path}\n", "convert" , " This may take a while.")
-            
+
+            text_widget.insert(tk.END, f"Converting: {file_path}\n", "convert")
+            text_widget.insert(tk.END, " This may take a while.\n")
+
             if convert_to_ps3_compatible(file_path, output_file, lambda p: update_progress_bar(progress_bar, p)):
-                text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert")
-                text_widget.insert(tk.END, f"Converted file located at: {output_file}\n", "convert")
+                text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert_blue")
+                text_widget.insert(tk.END, f"Converted file located at: {output_file}\n", "convert_blue")
             else:
                 text_widget.insert(tk.END, f"Failed to convert: {file_path}\n", "error")
 
