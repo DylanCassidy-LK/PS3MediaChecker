@@ -72,50 +72,78 @@ def convert_to_ps3_compatible(input_file, output_file, progress_callback=None):
     duration = get_video_duration(input_file)
     if duration is None:
         return False
-    
+
+    global ffmpeg_process  # Declare ffmpeg_process as global so it can be accessed outside
     try:
-        process = subprocess.Popen(
+        ffmpeg_process = subprocess.Popen(
             ["ffmpeg", "-i", input_file, "-vcodec", "h264", "-b:v", "2000k", "-acodec", "aac", "-r", "30", output_file],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True
         )
 
-        # Monitor progress
-        for line in process.stdout:
-            if progress_callback:
-                # Extract time from the output
-                time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
-                if time_match:
-                    hours, minutes, seconds, _ = map(int, time_match.groups())
-                    elapsed_time = hours * 3600 + minutes * 60 + seconds
-                    progress = elapsed_time / duration
-                    progress_callback(progress)
+        # Monitor progress and update in quarters, then reset
+        while True:
+            for line in ffmpeg_process.stdout:
+                if progress_callback:
+                    # Extract time from the output
+                    time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
+                    if time_match:
+                        hours, minutes, seconds, _ = map(int, time_match.groups())
+                        elapsed_time = hours * 3600 + minutes * 60 + seconds
+                        progress = elapsed_time / duration
 
-        process.wait()
+                        # Update progress in quarters
+                        if progress < 0.25:
+                            progress_callback(25)  # 25% completed
+                        elif progress >= 0.25 and progress < 0.5:
+                            progress_callback(50)  # 50% completed
+                        elif progress >= 0.5 and progress < 0.75:
+                            progress_callback(75)  # 75% completed
+                        elif progress >= 0.75:
+                            progress_callback(100)  # 100% completed
 
-        if process.returncode == 0:
+                        # Reset progress to 0 after reaching 100%, with a small delay for the visual reset
+                        if progress >= 1.0:
+                            progress_callback(100)
+                            time.sleep(0.5)  # Small delay before resetting
+                            progress_callback(0)  # Reset to 0% and start over
+
+        ffmpeg_process.wait()
+
+        if ffmpeg_process.returncode == 0:
             return True
         else:
             return False
     except subprocess.CalledProcessError:
         return False
 
+
+
+
+def cleanup():
+    """Cleanup function to terminate FFmpeg processes on app close."""
+    if 'ffmpeg_process' in globals():
+        ffmpeg_process.terminate()  # Terminate the FFmpeg process if it is running
+    root.quit()
+
 def continuous_progress_bar(progress_bar):
-    """Animate the progress bar by continuously filling and refilling."""
+    """Continuously update the progress bar in quarters and loop."""
     def loop_progress():
-        if progress_bar['value'] >= 100:
-            progress_bar['value'] = 0
+        current_value = progress_bar["value"]
+        if current_value >= 100:
+            progress_bar["value"] = 0  # Reset progress bar to 0 after reaching 100%
         else:
-            progress_bar['value'] += 1  # Increment by 1 for smoother animation
-        progress_bar.after(500, loop_progress)  # Adjusted to 200ms for slower updates
+            progress_bar["value"] += 25  # Increment by 25% to fill in quarters
+        progress_bar.after(500, loop_progress)  # Adjust the speed (500ms = 0.5 seconds)
     
-    loop_progress()
+    loop_progress()  # Start the loop
+
 
 
 def update_progress_bar(progress_bar, progress):
-    """Set the progress bar to full when the conversion is done."""
-    progress_bar.after(0, lambda: progress_bar.config(value=100))
+    """Update the progress bar continuously based on the progress in quarters."""
+    progress_bar.after(0, lambda: progress_bar.config(value=progress))
 
 def start_conversion_thread(files_to_convert, text_widget, progress_bar):
     """Start a thread to handle file conversion."""
@@ -136,7 +164,7 @@ def start_conversion_thread(files_to_convert, text_widget, progress_bar):
             # Start the continuous progress bar animation
             continuous_progress_bar(progress_bar)
 
-            if convert_to_ps3_compatible(file_path, output_file, lambda p: update_progress_bar(progress_bar, p)):
+            if convert_to_ps3_compatible(file_path, output_file):
                 text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert_blue")
                 text_widget.insert(tk.END, f"Converted file located at: {output_file}\n", "convert_blue")
             else:
@@ -152,6 +180,7 @@ def start_conversion_thread(files_to_convert, text_widget, progress_bar):
 
     conversion_thread = threading.Thread(target=conversion_task)
     conversion_thread.start()
+
 
 def select_folder(text_widget, progress_bar, convert=False):
     """Open a folder dialog to select a folder and start scanning."""
@@ -237,7 +266,9 @@ def create_gui():
     root.title("PS3 Video Compatibility Checker")
     root.geometry("860x600")  # Set a wider default window size
     root.resizable(True, True)  # Allow the window to be resizable
-
+	
+    root.protocol("WM_DELETE_WINDOW", cleanup)
+	 
     # Style the widgets
     style = ttk.Style()
     style.configure("TButton", font=("Helvetica", 12), padding=10)
