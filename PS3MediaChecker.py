@@ -4,6 +4,7 @@ import threading
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
+import time
 
 def check_ffmpeg_installed():
     """Check if ffmpeg/ffprobe is installed."""
@@ -74,7 +75,7 @@ def convert_to_ps3_compatible(input_file, output_file, progress_callback=None):
     
     try:
         process = subprocess.Popen(
-            ["ffmpeg", "-i", input_file, "-vcodec", "h264", "-acodec", "aac", output_file],
+            ["ffmpeg", "-i", input_file, "-vcodec", "h264", "-b:v", "2000k", "-acodec", "aac", "-r", "30", output_file],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True
@@ -100,11 +101,21 @@ def convert_to_ps3_compatible(input_file, output_file, progress_callback=None):
     except subprocess.CalledProcessError:
         return False
 
+def continuous_progress_bar(progress_bar):
+    """Animate the progress bar by continuously filling and refilling."""
+    def loop_progress():
+        if progress_bar['value'] >= 100:
+            progress_bar['value'] = 0
+        else:
+            progress_bar['value'] += 1  # Increment by 1 for smoother animation
+        progress_bar.after(500, loop_progress)  # Adjusted to 200ms for slower updates
+    
+    loop_progress()
+
 
 def update_progress_bar(progress_bar, progress):
-    """Update the progress bar with the given progress value (0 to 1)."""
-    progress_bar.after(0, lambda: progress_bar.config(value=progress * 100))
-
+    """Set the progress bar to full when the conversion is done."""
+    progress_bar.after(0, lambda: progress_bar.config(value=100))
 
 def start_conversion_thread(files_to_convert, text_widget, progress_bar):
     """Start a thread to handle file conversion."""
@@ -112,7 +123,6 @@ def start_conversion_thread(files_to_convert, text_widget, progress_bar):
         for i, file_path in enumerate(files_to_convert):
             output_file = os.path.splitext(file_path)[0] + "_ps3.mp4"
             
-         
             text_widget.tag_configure("convert_blue", font=("Helvetica", 12, "bold"), foreground="#3498db")
 
             # Check if the converted file already exists
@@ -122,6 +132,9 @@ def start_conversion_thread(files_to_convert, text_widget, progress_bar):
 
             text_widget.insert(tk.END, f"Converting: {file_path}\n", "convert")
             text_widget.insert(tk.END, " This may take a while.\n")
+
+            # Start the continuous progress bar animation
+            continuous_progress_bar(progress_bar)
 
             if convert_to_ps3_compatible(file_path, output_file, lambda p: update_progress_bar(progress_bar, p)):
                 text_widget.insert(tk.END, f"Converted: {file_path} to {output_file}\n", "convert_blue")
@@ -139,6 +152,12 @@ def start_conversion_thread(files_to_convert, text_widget, progress_bar):
 
     conversion_thread = threading.Thread(target=conversion_task)
     conversion_thread.start()
+
+def select_folder(text_widget, progress_bar, convert=False):
+    """Open a folder dialog to select a folder and start scanning."""
+    folder_path = filedialog.askdirectory()
+    if folder_path:
+        scan_folder(folder_path, text_widget, progress_bar, convert)
 
 def scan_folder(folder_path, text_widget, progress_bar, convert=False):
     """Scan folder for PS3 compatible videos and optionally convert unsupported ones."""
@@ -205,31 +224,11 @@ def scan_folder(folder_path, text_widget, progress_bar, convert=False):
 
     text_widget.yview_moveto(0)  # Scroll to the top of the text widget
 
-    # After scanning, provide feedback and the option to view detailed logs
     text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
-    
-    # Using grid for the details button instead of pack
-    details_button = ttk.Button(frame, text="View Details", command=lambda: show_details(detailed_logs))
-    details_button.grid(row=5, column=0, columnspan=2, pady=10, sticky="ew")
 
-
-
-def show_details(details):
-    """Show detailed logs in a new window."""
-    detail_window = tk.Toplevel()
-    detail_window.title("Detailed Logs")
-    detail_text = scrolledtext.ScrolledText(detail_window, wrap=tk.WORD, width=60, height=20)
-    detail_text.pack(pady=10, expand=True, fill=tk.BOTH)
-    detail_text.insert(tk.END, details)
-
-def select_folder(text_widget, progress_bar, convert=False):
-    """Open a folder dialog to select a folder and start scanning."""
-    folder_path = filedialog.askdirectory()
-    if folder_path:
-        scan_folder(folder_path, text_widget, progress_bar, convert)
 
 def create_gui():
-    """Create a minimal GUI using tkinter."""
+    """Create a minimal GUI using tkinter with improved styling."""
     if not check_ffmpeg_installed():
         return
     
@@ -239,6 +238,7 @@ def create_gui():
     root.geometry("860x600")  # Set a wider default window size
     root.resizable(True, True)  # Allow the window to be resizable
 
+    # Style the widgets
     style = ttk.Style()
     style.configure("TButton", font=("Helvetica", 12), padding=10)
     style.configure("TLabel", font=("Helvetica", 14))
@@ -255,7 +255,7 @@ def create_gui():
     root.grid_columnconfigure(0, weight=1)
     frame.grid_rowconfigure(3, weight=1)
 
-    label = ttk.Label(frame, text="PS3 Video Compatibility Checker")
+    label = ttk.Label(frame, text="PS3 Video Compatibility Checker", anchor="center")
     label.grid(row=0, column=0, columnspan=2, pady=10, sticky="ew")
 
     convert_var = tk.BooleanVar()
