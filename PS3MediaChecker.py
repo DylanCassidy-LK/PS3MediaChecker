@@ -14,19 +14,16 @@ class PS3VideoConverter:
         self.output_window = None
         self.output_text = None
 
-        # Create the root window first
-        self.root = tk.Tk()
-        self.root.withdraw()  # Hide the root window until we're ready to show it
-
-        # Now we can create Tkinter variables
+      self.root = tk.Tk()
+        self.root.withdraw()  
+        
         self.convert_unsupported = tk.BooleanVar()
 
-        # Check if ffmpeg is installed
+       
         if not self.check_ffmpeg_installed():
-            self.root.destroy()  # Close the root window if ffmpeg is not installed
-            return
+            self.root.destroy()  
 
-        # Create the GUI
+       
         self.create_gui()
 
     def check_ffmpeg_installed(self):
@@ -69,7 +66,7 @@ class PS3VideoConverter:
                     self.output_text.configure(state=tk.DISABLED)
                     self.output_text.yview(tk.END)
         except tk.TclError:
-            pass  # Ignore any errors if the output_text widget is destroyed
+            pass  
 
     def convert_to_ps3_compatible(self, input_file, output_file):
         """Convert a file to a PS3-compatible format using ffmpeg."""
@@ -79,14 +76,14 @@ class PS3VideoConverter:
                     self.text_widget.insert(tk.END, f"Input file not found: {input_file}\n", "error")
                 return False
 
-            # Construct the FFmpeg command with the corrected scale filter
+            
             output_file_ps3 = f"{os.path.splitext(output_file)[0]}_PS3.mp4"
             ffmpeg_cmd = [
                 "ffmpeg", "-i", input_file,
                 "-vcodec", "h264", "-b:v", "1500k",
                 "-profile:v", "main", "-level", "4.1",
                 "-acodec", "aac", "-b:a", "192k",
-                # Here is the updated scale filter to ensure width is divisible by 2
+                
                 "-vf", "scale='trunc(iw/2)*2':'trunc(ih/2)*2'",
                 "-movflags", "faststart",
                 "-y", output_file_ps3
@@ -101,10 +98,10 @@ class PS3VideoConverter:
 
             self.active_ffmpeg_processes.append(ffmpeg_process)
 
-           # Show FFmpeg output window if it's not open
+           
             self.show_ffmpeg_output_window()
 
-            # Start reading the FFmpeg output
+            
             threading.Thread(target=self.read_ffmpeg_output, args=(ffmpeg_process,), daemon=True).start()
 
             ffmpeg_process.wait()
@@ -164,8 +161,8 @@ class PS3VideoConverter:
         try:
             for ffmpeg_process in self.active_ffmpeg_processes:
                 if ffmpeg_process.poll() is None:
-                    ffmpeg_process.terminate()  # Terminate the FFmpeg process if it is still running
-                    ffmpeg_process.wait()       # Wait for FFmpeg to fully terminate
+                    ffmpeg_process.terminate()  
+                    ffmpeg_process.wait()       
         except Exception:
             pass
         finally:
@@ -173,7 +170,7 @@ class PS3VideoConverter:
 
     def scan_folder(self, folder_path, convert=False):
         """Scan folder for PS3 compatible videos and optionally convert unsupported ones."""
-        self.text_widget.delete(1.0, tk.END)  # Clear previous output
+        self.text_widget.delete(1.0, tk.END) 
     
         supported_files = []
         unsupported_files = []
@@ -207,16 +204,16 @@ class PS3VideoConverter:
             else:
                 failed_files.append(file_path)
 
-            # Update real-time progress
+            
             self.text_widget.insert(tk.END, f"Processing file {i}/{total_files}: {file_path}\n")
-            self.text_widget.yview(tk.END)  # Auto-scroll to the end of the text widget
+            self.text_widget.yview(tk.END)  
             self.text_widget.update_idletasks()
 
-            # Update the progress bar
+            
             self.progress_bar["value"] = i
             self.progress_bar.update_idletasks()
 
-        # Display the summary in the main window
+        
         self.text_widget.insert(tk.END, "\nSummary of Results:\n", "summary")
         self.text_widget.insert(tk.END, f"Supported Files ({len(supported_files)}):\n", "summary")
         for file in supported_files:
@@ -232,7 +229,7 @@ class PS3VideoConverter:
                 self.text_widget.insert(tk.END, f" - {file}\n", "error")
 
             self.text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
-            self.text_widget.yview_moveto(0)  # Scroll to the top of the text widget
+            self.text_widget.yview_moveto(0)  
 
 
     def start_scan_thread(self):
@@ -289,12 +286,12 @@ class PS3VideoConverter:
 
     def create_gui(self):
         """Create the main GUI for the PS3 Compatibility Checker."""
-        self.root.deiconify()  # Now we can show the root window
+        self.root.deiconify() 
         self.root.title("PS3 Video Compatibility Checker")
         self.root.geometry("800x600")
-        self.root.configure(bg="#008080")  # Set background color to teal
+        self.root.configure(bg="#008080")  
 
-        # Use tk.Frame to allow background color customization
+        
         frame = tk.Frame(self.root, bg="#008080", padx=20, pady=20)
         frame.grid(row=0, column=0, sticky="nsew")
         self.root.grid_rowconfigure(0, weight=1)
