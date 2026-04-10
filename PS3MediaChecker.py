@@ -1,512 +1,365 @@
+import os
+import subprocess
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+import time
+import concurrent.futures
 
- import os
- import subprocess
- import threading
- import tkinter as tk
- from tkinter import filedialog, messagebox, scrolledtext, ttk
--import time
--import concurrent.futures
- 
- class PS3VideoConverter:
-     def __init__(self):
-         self.active_ffmpeg_processes = []
-         self.selected_file = None
-         self.selected_folder = None
-         self.output_window = None
-         self.output_text = None
-+        self.startup_failed = False
- 
--      self.root = tk.Tk()
-+        self.root = tk.Tk()
-         self.root.withdraw()  
-         
-         self.convert_unsupported = tk.BooleanVar()
- 
-        
-         if not self.check_ffmpeg_installed():
--            self.root.destroy()  
-+            self.startup_failed = True
-+            self.root.destroy()
-+            return
- 
-        
-         self.create_gui()
- 
-     def check_ffmpeg_installed(self):
-         """Check if ffmpeg/ffprobe is installed."""
-         try:
-             subprocess.check_output(["ffmpeg", "-version"])
-             subprocess.check_output(["ffprobe", "-version"])
-         except FileNotFoundError:
-             messagebox.showerror(
-                 "ffmpeg Not Found",
-                 "ffmpeg is not installed or not in the system's PATH.\n\n"
-                 "Please install ffmpeg before using this application."
-             )
-             return False
-         return True
- 
-     def create_ffmpeg_output_window(self):
-         """Create a new window for FFmpeg output."""
-         self.output_window = tk.Toplevel()
-         self.output_window.title("FFmpeg Output")
-         self.output_window.geometry("600x400")
-+        self.output_window.configure(bg="#0F172A")
- 
-         self.output_text = scrolledtext.ScrolledText(
--            self.output_window, wrap=tk.WORD, bg="#B2DFDB", fg="black", state=tk.NORMAL
-+            self.output_window,
-+            wrap=tk.WORD,
-+            bg="#0B1220",
-+            fg="#E2E8F0",
-+            insertbackground="#E2E8F0",
-+            state=tk.NORMAL,
-+            font=("Consolas", 10),
-         )
-         self.output_text.pack(expand=True, fill=tk.BOTH)
- 
-     def show_ffmpeg_output_window(self):
-         """Create and display the FFmpeg output window when button is pressed."""
-+        if threading.current_thread() is not threading.main_thread():
-+            self.root.after(0, self.show_ffmpeg_output_window)
-+            return
-         if self.output_window is None or not self.output_window.winfo_exists():
-             self.create_ffmpeg_output_window()
- 
-+    def _append_log_now(self, message, tag=None):
-+        """Append text to the main log widget from the UI thread."""
-+        if not getattr(self, "text_widget", None):
-+            return
-+        if tag:
-+            self.text_widget.insert(tk.END, message, tag)
-+        else:
-+            self.text_widget.insert(tk.END, message)
-+        self.text_widget.yview(tk.END)
-+
-+    def log(self, message, tag=None):
-+        """Thread-safe logger for the main text widget."""
-+        if threading.current_thread() is threading.main_thread():
-+            self._append_log_now(message, tag)
-+        else:
-+            self.root.after(0, self._append_log_now, message, tag)
-+
-+    def clear_log(self):
-+        """Thread-safe clear of the main text widget."""
-+        if threading.current_thread() is threading.main_thread():
-+            self.text_widget.delete(1.0, tk.END)
-+        else:
-+            self.root.after(0, lambda: self.text_widget.delete(1.0, tk.END))
-+
-+    def set_progress(self, value=None, maximum=None):
-+        """Thread-safe progress bar updates."""
-+        def _apply():
-+            if maximum is not None:
-+                self.progress_bar["maximum"] = maximum
-+            if value is not None:
-+                self.progress_bar["value"] = value
-+            self.progress_bar.update_idletasks()
-+
-+        if threading.current_thread() is threading.main_thread():
-+            _apply()
-+        else:
-+            self.root.after(0, _apply)
-+
-+    def _append_ffmpeg_output(self, line):
-+        """Append text to FFmpeg output window from the UI thread."""
-+        if self.output_text and self.output_text.winfo_exists():
-+            self.output_text.configure(state=tk.NORMAL)
-+            self.output_text.insert(tk.END, line)
-+            self.output_text.configure(state=tk.DISABLED)
-+            self.output_text.yview(tk.END)
-+
-     def read_ffmpeg_output(self, ffmpeg_process):
-         """Read and display FFmpeg output in the output text widget."""
-         try:
-             for line in ffmpeg_process.stdout:
--                if self.output_text and self.output_text.winfo_exists():
--                    self.output_text.configure(state=tk.NORMAL)
--                    self.output_text.insert(tk.END, line)
--                    self.output_text.configure(state=tk.DISABLED)
--                    self.output_text.yview(tk.END)
-+                self.root.after(0, self._append_ffmpeg_output, line)
-         except tk.TclError:
-             pass  
- 
-     def convert_to_ps3_compatible(self, input_file, output_file):
-         """Convert a file to a PS3-compatible format using ffmpeg."""
-         try:
-             if not os.path.isfile(input_file):
--                if self.text_widget:
--                    self.text_widget.insert(tk.END, f"Input file not found: {input_file}\n", "error")
-+                self.log(f"Input file not found: {input_file}\n", "error")
-                 return False
- 
-             
-             output_file_ps3 = f"{os.path.splitext(output_file)[0]}_PS3.mp4"
-             ffmpeg_cmd = [
-                 "ffmpeg", "-i", input_file,
-                 "-vcodec", "h264", "-b:v", "1500k",
-                 "-profile:v", "main", "-level", "4.1",
-                 "-acodec", "aac", "-b:a", "192k",
-                 
-                 "-vf", "scale='trunc(iw/2)*2':'trunc(ih/2)*2'",
-                 "-movflags", "faststart",
-                 "-y", output_file_ps3
-             ]
- 
--            if self.text_widget:
--                self.text_widget.insert(tk.END, f"Starting conversion: {input_file} -> {output_file_ps3}\n", "convert")
-+            self.log(f"Starting conversion: {input_file} -> {output_file_ps3}\n", "convert")
- 
-             ffmpeg_process = subprocess.Popen(
-                 ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True
-             )
- 
-             self.active_ffmpeg_processes.append(ffmpeg_process)
- 
+class PS3VideoConverter:
+    def __init__(self):
+        self.active_ffmpeg_processes = []
+        self.selected_file = None
+        self.selected_folder = None
+        self.output_window = None
+        self.output_text = None
+        self.startup_failed = False
+
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+        self.convert_unsupported = tk.BooleanVar()
+
+        if not self.check_ffmpeg_installed():
+            self.startup_failed = True
+            self.root.destroy()
+            return
+
+        self.create_gui()
+
+    def check_ffmpeg_installed(self):
+        """Check if ffmpeg/ffprobe is installed."""
+        try:
+            subprocess.check_output(["ffmpeg", "-version"])
+            subprocess.check_output(["ffprobe", "-version"])
+        except FileNotFoundError:
+            messagebox.showerror(
+                "ffmpeg Not Found",
+                "ffmpeg is not installed or not in the system's PATH.\n\n"
+                "Please install ffmpeg before using this application."
+            )
+            return False
+        return True
+
+    def create_ffmpeg_output_window(self):
+        """Create a new window for FFmpeg output."""
+        self.output_window = tk.Toplevel()
+        self.output_window.title("FFmpeg Output")
+        self.output_window.geometry("600x400")
+
+        self.output_text = scrolledtext.ScrolledText(
+            self.output_window, wrap=tk.WORD, bg="#B2DFDB", fg="black", state=tk.NORMAL
+        )
+        self.output_text.pack(expand=True, fill=tk.BOTH)
+
+    def show_ffmpeg_output_window(self):
+        """Create and display the FFmpeg output window when button is pressed."""
+        if self.output_window is None or not self.output_window.winfo_exists():
+            self.create_ffmpeg_output_window()
+
+    def read_ffmpeg_output(self, ffmpeg_process):
+        """Read and display FFmpeg output in the output text widget."""
+        try:
+            for line in ffmpeg_process.stdout:
+                if self.output_text and self.output_text.winfo_exists():
+                    self.output_text.configure(state=tk.NORMAL)
+                    self.output_text.insert(tk.END, line)
+                    self.output_text.configure(state=tk.DISABLED)
+                    self.output_text.yview(tk.END)
+        except tk.TclError:
+            pass  
+
+    def convert_to_ps3_compatible(self, input_file, output_file):
+        """Convert a file to a PS3-compatible format using ffmpeg."""
+        try:
+            if not os.path.isfile(input_file):
+                if self.text_widget:
+                    self.text_widget.insert(tk.END, f"Input file not found: {input_file}\n", "error")
+                return False
+
             
-             self.show_ffmpeg_output_window()
- 
-             
-             threading.Thread(target=self.read_ffmpeg_output, args=(ffmpeg_process,), daemon=True).start()
- 
-             ffmpeg_process.wait()
- 
-             if ffmpeg_process.returncode == 0 and os.path.isfile(output_file_ps3):
-                 return True
-             else:
--               if self.text_widget:
--                    self.text_widget.insert(tk.END, f"Conversion failed: {input_file}\n", "error")
-+                self.log(f"Conversion failed: {input_file}\n", "error")
-             return False
- 
-         except subprocess.CalledProcessError as e:
--            if self.text_widget:
--                self.text_widget.insert(tk.END, f"Conversion error: {str(e)}\n", "error")
-+            self.log(f"Conversion error: {str(e)}\n", "error")
-             return False
- 
- 
- 
- 
-     def start_conversion(self, input_file, output_file):
-         """Start conversion process and track it."""
-         success = self.convert_to_ps3_compatible(input_file, output_file)
-         if success:
--            self.text_widget.insert(tk.END, f"Conversion successful: {output_file}\n", "success")
-+            output_file_ps3 = f"{os.path.splitext(output_file)[0]}_PS3.mp4"
-+            self.log(f"Conversion successful: {output_file_ps3}\n", "success")
-         else:
--            self.text_widget.insert(tk.END, f"Conversion failed: {input_file}\n", "error")
-+            self.log(f"Conversion failed: {input_file}\n", "error")
- 
-     def start_conversion_thread(self, input_file=None):
-         """Start the conversion process for the selected file in a new thread."""
-         if input_file is None:
-             input_file = self.selected_file
- 
-         if input_file:
-             output_file = f"{os.path.splitext(input_file)[0]}_PS3.mp4"
-             threading.Thread(target=self.start_conversion, args=(input_file, output_file), daemon=True).start()
-         else:
--            self.text_widget.insert(tk.END, "No file selected for conversion.\n", "error")
-+            self.log("No file selected for conversion.\n", "error")
- 
-     def select_file(self):
-         """Allow the user to select a file for conversion."""
-         self.selected_file = filedialog.askopenfilename()
-         if self.selected_file:
--            self.text_widget.insert(tk.END, f"Selected file: {self.selected_file}\n", "info")
-+            self.log(f"Selected file: {self.selected_file}\n", "info")
-         else:
--            self.text_widget.insert(tk.END, "No file selected.\n", "info")
-+            self.log("No file selected.\n", "info")
- 
-     def select_folder(self):
-         """Allow the user to select a folder for scanning."""
-         self.selected_folder = filedialog.askdirectory()
-         if self.selected_folder:
--            self.text_widget.insert(tk.END, f"Selected folder: {self.selected_folder}\n", "info")
-+            self.log(f"Selected folder: {self.selected_folder}\n", "info")
-         else:
--            self.text_widget.insert(tk.END, "No folder selected.\n", "info")
-+            self.log("No folder selected.\n", "info")
- 
-     def cleanup(self):
-         """Cleanup function to terminate FFmpeg processes and close the application."""
-         try:
-             for ffmpeg_process in self.active_ffmpeg_processes:
-                 if ffmpeg_process.poll() is None:
-                     ffmpeg_process.terminate()  
-                     ffmpeg_process.wait()       
-         except Exception:
-             pass
-         finally:
-             self.root.destroy()
- 
-     def scan_folder(self, folder_path, convert=False):
-         """Scan folder for PS3 compatible videos and optionally convert unsupported ones."""
--        self.text_widget.delete(1.0, tk.END) 
-+        self.clear_log()
-     
-         supported_files = []
-         unsupported_files = []
-         failed_files = []
-     
-         files = []
-         for root_dir, _, file_names in os.walk(folder_path):
-             for file in file_names:
-                 full_path = os.path.join(root_dir, file)
-                 files.append(full_path)
- 
--        self.progress_bar["maximum"] = len(files)
--        self.progress_bar["value"] = 0
-+        self.set_progress(value=0, maximum=len(files))
- 
-         total_files = len(files)
-     
-         for i, file_path in enumerate(files, start=1):
-             video_codec, audio_codec, resolution = self.get_file_info(file_path)
-             if video_codec and audio_codec and resolution:
-                 if self.is_ps3_supported(video_codec, audio_codec, resolution):
-                     supported_files.append(file_path)
-                 else:
-                     unsupported_files.append(file_path)
-                     if convert:
-                         # Convert one file at a time
-                         success = self.convert_to_ps3_compatible(file_path, file_path)
-                         if success:
--                            self.text_widget.insert(tk.END, f"Conversion successful: {file_path}\n", "success")
-+                            self.log(f"Conversion successful: {file_path}\n", "success")
-                         else:
--                            self.text_widget.insert(tk.END, f"Conversion failed: {file_path}\n", "error")
-+                            self.log(f"Conversion failed: {file_path}\n", "error")
-             else:
-                 failed_files.append(file_path)
- 
-             
--            self.text_widget.insert(tk.END, f"Processing file {i}/{total_files}: {file_path}\n")
--            self.text_widget.yview(tk.END)  
--            self.text_widget.update_idletasks()
-+            self.log(f"Processing file {i}/{total_files}: {file_path}\n")
- 
-             
--            self.progress_bar["value"] = i
--            self.progress_bar.update_idletasks()
-+            self.set_progress(value=i)
- 
-         
--        self.text_widget.insert(tk.END, "\nSummary of Results:\n", "summary")
--        self.text_widget.insert(tk.END, f"Supported Files ({len(supported_files)}):\n", "summary")
-+        self.log("\nSummary of Results:\n", "summary")
-+        self.log(f"Supported Files ({len(supported_files)}):\n", "summary")
-         for file in supported_files:
--            self.text_widget.insert(tk.END, f" - {file}\n", "success")
-+            self.log(f" - {file}\n", "success")
- 
--        self.text_widget.insert(tk.END, f"\nUnsupported Files ({len(unsupported_files)}):\n", "summary")
-+        self.log(f"\nUnsupported Files ({len(unsupported_files)}):\n", "summary")
-         for file in unsupported_files:
--            self.text_widget.insert(tk.END, f" - {file}\n", "error")
-+            self.log(f" - {file}\n", "error")
- 
-         if failed_files:
--            self.text_widget.insert(tk.END, f"\nFailed to Process Files ({len(failed_files)}):\n", "summary")
-+            self.log(f"\nFailed to Process Files ({len(failed_files)}):\n", "summary")
-             for file in failed_files:
--                self.text_widget.insert(tk.END, f" - {file}\n", "error")
-+                self.log(f" - {file}\n", "error")
- 
--            self.text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
--            self.text_widget.yview_moveto(0)  
-+        self.log("\nScan Complete!\n", "complete")
- 
- 
-     def start_scan_thread(self):
-         """Start the scanning process for the selected folder in a new thread."""
-         if self.selected_folder:
-             convert = self.convert_unsupported.get()
-             threading.Thread(target=self.scan_folder, args=(self.selected_folder, convert), daemon=True).start()
-         else:
--            self.text_widget.insert(tk.END, "No folder selected for scanning.\n", "error")
-+            self.log("No folder selected for scanning.\n", "error")
- 
-     def get_file_info(self, file_path):
-         """Get video codec, audio codec, and resolution of the file using ffprobe."""
-         try:
-             cmd = [
-                 "ffprobe",
-                 "-v", "error",
-                 "-select_streams", "v:0",
-                 "-show_entries", "stream=codec_name,width,height",
-                 "-of", "default=noprint_wrappers=1:nokey=1",
-                 file_path
-             ]
-             output = subprocess.check_output(cmd, universal_newlines=True)
-             video_info = output.strip().split('\n')
- 
-             if len(video_info) >= 3:
-                 video_codec, width, height = video_info[:3]
-             else:
-                 return None, None, None
- 
-             cmd = [
-                 "ffprobe",
-                 "-v", "error",
-                 "-select_streams", "a:0",
-                 "-show_entries", "stream=codec_name",
-                 "-of", "default=noprint_wrappers=1:nokey=1",
-                 file_path
-             ]
-             output = subprocess.check_output(cmd, universal_newlines=True)
-             audio_codec = output.strip()
- 
-             resolution = (int(width), int(height))
- 
-             return video_codec, audio_codec, resolution
--        except Exception as e:
-+        except Exception:
-             return None, None, None
- 
-     def is_ps3_supported(self, video_codec, audio_codec, resolution):
-         """Check if the file is PS3 compatible based on codecs and resolution."""
-         max_width, max_height = 1920, 1080
-         if video_codec.lower() == "h264" and audio_codec.lower() == "aac":
-             if resolution[0] <= max_width and resolution[1] <= max_height:
-                 return True
-         return False
- 
-     def create_gui(self):
-         """Create the main GUI for the PS3 Compatibility Checker."""
--        self.root.deiconify() 
-+        self.root.deiconify()
-         self.root.title("PS3 Video Compatibility Checker")
--        self.root.geometry("800x600")
--        self.root.configure(bg="#008080")  
-+        self.root.geometry("900x650")
-+        self.root.configure(bg="#0F172A")
- 
--        
--        frame = tk.Frame(self.root, bg="#008080", padx=20, pady=20)
-+        frame = ttk.Frame(self.root, padding=18)
-         frame.grid(row=0, column=0, sticky="nsew")
-         self.root.grid_rowconfigure(0, weight=1)
-         self.root.grid_columnconfigure(0, weight=1)
--        frame.grid_rowconfigure(2, weight=1)
-+        frame.grid_rowconfigure(3, weight=1)
-         frame.grid_columnconfigure(0, weight=1)
- 
--        # Set style for header label
-         style = ttk.Style()
--        style.theme_use('clam')
--        style.configure('Header.TLabel', background='#008080', foreground='white', font=("Arial", 18, "bold"))
-+        style.theme_use("clam")
-+        style.configure("App.TFrame", background="#0F172A")
-+        style.configure("Header.TLabel", background="#0F172A", foreground="#E2E8F0", font=("Arial", 20, "bold"))
-+        style.configure("SubHeader.TLabel", background="#0F172A", foreground="#94A3B8", font=("Arial", 10))
-+        style.configure("Card.TLabelframe", background="#111827", foreground="#E2E8F0")
-+        style.configure("Card.TLabelframe.Label", background="#111827", foreground="#E2E8F0", font=("Arial", 10, "bold"))
-+        style.configure("Primary.TButton", font=("Arial", 10, "bold"), padding=8)
-+        style.configure("TCheckbutton", background="#111827", foreground="#E2E8F0")
-+        style.configure("Status.Horizontal.TProgressbar", troughcolor="#1E293B", background="#22C55E", bordercolor="#1E293B")
-+        frame.configure(style="App.TFrame")
- 
-         label = ttk.Label(
--            frame, text="PS3 Video Compatibility Checker", anchor="center", style='Header.TLabel'
-+            frame, text="PS3 Video Compatibility Checker", anchor="center", style="Header.TLabel"
-+        )
-+        label.grid(row=0, column=0, sticky="w", pady=(4, 0))
-+        sub_label = ttk.Label(
-+            frame,
-+            text="Scan videos, detect compatibility, and convert unsupported files safely.",
-+            style="SubHeader.TLabel",
-         )
--        label.grid(row=0, column=0, pady=10)
-+        sub_label.grid(row=1, column=0, sticky="w", pady=(0, 12))
- 
--        # Frame for buttons
--        button_frame = tk.Frame(frame, bg="#008080")
--        button_frame.grid(row=1, column=0, pady=10)
-+        button_frame = ttk.LabelFrame(frame, text="Actions", padding=12, style="Card.TLabelframe")
-+        button_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-+        for col in range(2):
-+            button_frame.grid_columnconfigure(col, weight=1)
- 
--        # Button to select a file for conversion
--        select_button = ttk.Button(button_frame, text="Select File", command=self.select_file)
--        select_button.grid(row=0, column=0, padx=5, pady=5)
-+        select_button = ttk.Button(button_frame, text="Select File", command=self.select_file, style="Primary.TButton")
-+        select_button.grid(row=0, column=0, padx=6, pady=6, sticky="ew")
- 
--        # Button to start the conversion process
--        convert_button = ttk.Button(button_frame, text="Convert File", command=self.start_conversion_thread)
--        convert_button.grid(row=0, column=1, padx=5, pady=5)
-+        convert_button = ttk.Button(
-+            button_frame, text="Convert Selected File", command=self.start_conversion_thread, style="Primary.TButton"
-+        )
-+        convert_button.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
- 
--        # Button to select a folder for scanning
--        select_folder_button = ttk.Button(button_frame, text="Select Folder", command=self.select_folder)
--        select_folder_button.grid(row=1, column=0, padx=5, pady=5)
-+        select_folder_button = ttk.Button(
-+            button_frame, text="Select Folder", command=self.select_folder, style="Primary.TButton"
-+        )
-+        select_folder_button.grid(row=1, column=0, padx=6, pady=6, sticky="ew")
- 
--        # Button to start the scanning process
--        scan_button = ttk.Button(button_frame, text="Scan Folder", command=self.start_scan_thread)
--        scan_button.grid(row=1, column=1, padx=5, pady=5)
-+        scan_button = ttk.Button(button_frame, text="Scan Folder", command=self.start_scan_thread, style="Primary.TButton")
-+        scan_button.grid(row=1, column=1, padx=6, pady=6, sticky="ew")
- 
--        # Checkbox to decide whether to convert unsupported files
-         convert_checkbox = ttk.Checkbutton(
-             button_frame, text="Convert Unsupported Files", variable=self.convert_unsupported
-         )
--        convert_checkbox.grid(row=2, column=0, columnspan=2, pady=5)
-+        convert_checkbox.grid(row=2, column=0, columnspan=2, padx=6, pady=(8, 4), sticky="w")
- 
--        # Button to show FFmpeg output window
--        output_button = ttk.Button(button_frame, text="Show FFmpeg Output", command=self.show_ffmpeg_output_window)
--        output_button.grid(row=3, column=0, columnspan=2, pady=5)
-+        output_button = ttk.Button(
-+            button_frame, text="Show FFmpeg Output", command=self.show_ffmpeg_output_window, style="Primary.TButton"
-+        )
-+        output_button.grid(row=3, column=0, columnspan=2, padx=6, pady=(6, 4), sticky="ew")
- 
--        # Scrollable text widget for logging
-         self.text_widget = scrolledtext.ScrolledText(
--            frame, wrap=tk.WORD, bg="#B2DFDB", fg="black", state=tk.NORMAL, font=("Arial", 10)
-+            frame, wrap=tk.WORD, bg="#0B1220", fg="#E2E8F0", insertbackground="#E2E8F0", state=tk.NORMAL, font=("Consolas", 10)
-         )
--        self.text_widget.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
--
--        # Progress bar for file processing
--        self.progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate", length=400)
--        self.progress_bar.grid(row=3, column=0, pady=10)
--
--        # Configure text tags for styling
--        self.text_widget.tag_configure("error", foreground="#C62828")  # Dark Red
--        self.text_widget.tag_configure("success", foreground="#2E7D32")  # Dark Green
--        self.text_widget.tag_configure("info", foreground="#008B8B")  # Dark Cyan
--        self.text_widget.tag_configure("summary", foreground="#6A1B9A", font=("Arial", 12, "bold"))  # Purple
--        self.text_widget.tag_configure("complete", foreground="#2E7D32", font=("Arial", 12, "bold"))  # Dark Green
--        self.text_widget.tag_configure("convert", foreground="#EF6C00")  # Orange
-+        self.text_widget.grid(row=3, column=0, pady=(0, 10), sticky="nsew")
-+
-+        self.progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate", style="Status.Horizontal.TProgressbar")
-+        self.progress_bar.grid(row=4, column=0, sticky="ew")
-+
-+        self.text_widget.tag_configure("error", foreground="#F87171")
-+        self.text_widget.tag_configure("success", foreground="#4ADE80")
-+        self.text_widget.tag_configure("info", foreground="#38BDF8")
-+        self.text_widget.tag_configure("summary", foreground="#C084FC", font=("Consolas", 11, "bold"))
-+        self.text_widget.tag_configure("complete", foreground="#86EFAC", font=("Consolas", 11, "bold"))
-+        self.text_widget.tag_configure("convert", foreground="#FDBA74")
- 
-         self.root.protocol("WM_DELETE_WINDOW", self.cleanup)
-         self.root.mainloop()
- 
- if __name__ == "__main__":
-     PS3VideoConverter()
+            output_file_ps3 = f"{os.path.splitext(output_file)[0]}_PS3.mp4"
+            ffmpeg_cmd = [
+                "ffmpeg", "-i", input_file,
+                "-vcodec", "h264", "-b:v", "1500k",
+                "-profile:v", "main", "-level", "4.1",
+                "-acodec", "aac", "-b:a", "192k",
+                
+                "-vf", "scale='trunc(iw/2)*2':'trunc(ih/2)*2'",
+                "-movflags", "faststart",
+                "-y", output_file_ps3
+            ]
+
+            if self.text_widget:
+                self.text_widget.insert(tk.END, f"Starting conversion: {input_file} -> {output_file_ps3}\n", "convert")
+
+            ffmpeg_process = subprocess.Popen(
+                ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True
+            )
+
+            self.active_ffmpeg_processes.append(ffmpeg_process)
+
+           
+            self.show_ffmpeg_output_window()
+
+            
+            threading.Thread(target=self.read_ffmpeg_output, args=(ffmpeg_process,), daemon=True).start()
+
+            ffmpeg_process.wait()
+
+            if ffmpeg_process.returncode == 0 and os.path.isfile(output_file_ps3):
+                return True
+            else:
+               if self.text_widget:
+                    self.text_widget.insert(tk.END, f"Conversion failed: {input_file}\n", "error")
+            return False
+
+        except subprocess.CalledProcessError as e:
+            if self.text_widget:
+                self.text_widget.insert(tk.END, f"Conversion error: {str(e)}\n", "error")
+            return False
+
+
+
+
+    def start_conversion(self, input_file, output_file):
+        """Start conversion process and track it."""
+        success = self.convert_to_ps3_compatible(input_file, output_file)
+        if success:
+            self.text_widget.insert(tk.END, f"Conversion successful: {output_file}\n", "success")
+        else:
+            self.text_widget.insert(tk.END, f"Conversion failed: {input_file}\n", "error")
+
+    def start_conversion_thread(self, input_file=None):
+        """Start the conversion process for the selected file in a new thread."""
+        if input_file is None:
+            input_file = self.selected_file
+
+        if input_file:
+            output_file = f"{os.path.splitext(input_file)[0]}_PS3.mp4"
+            threading.Thread(target=self.start_conversion, args=(input_file, output_file), daemon=True).start()
+        else:
+            self.text_widget.insert(tk.END, "No file selected for conversion.\n", "error")
+
+    def select_file(self):
+        """Allow the user to select a file for conversion."""
+        self.selected_file = filedialog.askopenfilename()
+        if self.selected_file:
+            self.text_widget.insert(tk.END, f"Selected file: {self.selected_file}\n", "info")
+        else:
+            self.text_widget.insert(tk.END, "No file selected.\n", "info")
+
+    def select_folder(self):
+        """Allow the user to select a folder for scanning."""
+        self.selected_folder = filedialog.askdirectory()
+        if self.selected_folder:
+            self.text_widget.insert(tk.END, f"Selected folder: {self.selected_folder}\n", "info")
+        else:
+            self.text_widget.insert(tk.END, "No folder selected.\n", "info")
+
+    def cleanup(self):
+        """Cleanup function to terminate FFmpeg processes and close the application."""
+        try:
+            for ffmpeg_process in self.active_ffmpeg_processes:
+                if ffmpeg_process.poll() is None:
+                    ffmpeg_process.terminate()  
+                    ffmpeg_process.wait()       
+        except Exception:
+            pass
+        finally:
+            self.root.destroy()
+
+    def scan_folder(self, folder_path, convert=False):
+        """Scan folder for PS3 compatible videos and optionally convert unsupported ones."""
+        self.text_widget.delete(1.0, tk.END) 
+    
+        supported_files = []
+        unsupported_files = []
+        failed_files = []
+    
+        files = []
+        for root_dir, _, file_names in os.walk(folder_path):
+            for file in file_names:
+                full_path = os.path.join(root_dir, file)
+                files.append(full_path)
+
+        self.progress_bar["maximum"] = len(files)
+        self.progress_bar["value"] = 0
+
+        total_files = len(files)
+    
+        for i, file_path in enumerate(files, start=1):
+            video_codec, audio_codec, resolution = self.get_file_info(file_path)
+            if video_codec and audio_codec and resolution:
+                if self.is_ps3_supported(video_codec, audio_codec, resolution):
+                    supported_files.append(file_path)
+                else:
+                    unsupported_files.append(file_path)
+                    if convert:
+                        # Convert one file at a time
+                        success = self.convert_to_ps3_compatible(file_path, file_path)
+                        if success:
+                            self.text_widget.insert(tk.END, f"Conversion successful: {file_path}\n", "success")
+                        else:
+                            self.text_widget.insert(tk.END, f"Conversion failed: {file_path}\n", "error")
+            else:
+                failed_files.append(file_path)
+
+            
+            self.text_widget.insert(tk.END, f"Processing file {i}/{total_files}: {file_path}\n")
+            self.text_widget.yview(tk.END)  
+            self.text_widget.update_idletasks()
+
+            
+            self.progress_bar["value"] = i
+            self.progress_bar.update_idletasks()
+
+        
+        self.text_widget.insert(tk.END, "\nSummary of Results:\n", "summary")
+        self.text_widget.insert(tk.END, f"Supported Files ({len(supported_files)}):\n", "summary")
+        for file in supported_files:
+            self.text_widget.insert(tk.END, f" - {file}\n", "success")
+
+        self.text_widget.insert(tk.END, f"\nUnsupported Files ({len(unsupported_files)}):\n", "summary")
+        for file in unsupported_files:
+            self.text_widget.insert(tk.END, f" - {file}\n", "error")
+
+        if failed_files:
+            self.text_widget.insert(tk.END, f"\nFailed to Process Files ({len(failed_files)}):\n", "summary")
+            for file in failed_files:
+                self.text_widget.insert(tk.END, f" - {file}\n", "error")
+
+            self.text_widget.insert(tk.END, "\nScan Complete!\n", "complete")
+            self.text_widget.yview_moveto(0)  
+
+
+    def start_scan_thread(self):
+        """Start the scanning process for the selected folder in a new thread."""
+        if self.selected_folder:
+            convert = self.convert_unsupported.get()
+            threading.Thread(target=self.scan_folder, args=(self.selected_folder, convert), daemon=True).start()
+        else:
+            self.text_widget.insert(tk.END, "No folder selected for scanning.\n", "error")
+
+    def get_file_info(self, file_path):
+        """Get video codec, audio codec, and resolution of the file using ffprobe."""
+        try:
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            output = subprocess.check_output(cmd, universal_newlines=True)
+            video_info = output.strip().split('\n')
+
+            if len(video_info) >= 3:
+                video_codec, width, height = video_info[:3]
+            else:
+                return None, None, None
+
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            output = subprocess.check_output(cmd, universal_newlines=True)
+            audio_codec = output.strip()
+
+            resolution = (int(width), int(height))
+
+            return video_codec, audio_codec, resolution
+        except Exception as e:
+            return None, None, None
+
+    def is_ps3_supported(self, video_codec, audio_codec, resolution):
+        """Check if the file is PS3 compatible based on codecs and resolution."""
+        max_width, max_height = 1920, 1080
+        if video_codec.lower() == "h264" and audio_codec.lower() == "aac":
+            if resolution[0] <= max_width and resolution[1] <= max_height:
+                return True
+        return False
+
+    def create_gui(self):
+        """Create the main GUI for the PS3 Compatibility Checker."""
+        self.root.deiconify() 
+        self.root.title("PS3 Video Compatibility Checker")
+        self.root.geometry("800x600")
+        self.root.configure(bg="#008080")  
+
+        
+        frame = tk.Frame(self.root, bg="#008080", padx=20, pady=20)
+        frame.grid(row=0, column=0, sticky="nsew")
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        # Set style for header label
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Header.TLabel', background='#008080', foreground='white', font=("Arial", 18, "bold"))
+
+        label = ttk.Label(
+            frame, text="PS3 Video Compatibility Checker", anchor="center", style='Header.TLabel'
+        )
+        label.grid(row=0, column=0, pady=10)
+
+        # Frame for buttons
+        button_frame = tk.Frame(frame, bg="#008080")
+        button_frame.grid(row=1, column=0, pady=10)
+
+        # Button to select a file for conversion
+        select_button = ttk.Button(button_frame, text="Select File", command=self.select_file)
+        select_button.grid(row=0, column=0, padx=5, pady=5)
+
+        # Button to start the conversion process
+        convert_button = ttk.Button(button_frame, text="Convert File", command=self.start_conversion_thread)
+        convert_button.grid(row=0, column=1, padx=5, pady=5)
+
+        # Button to select a folder for scanning
+        select_folder_button = ttk.Button(button_frame, text="Select Folder", command=self.select_folder)
+        select_folder_button.grid(row=1, column=0, padx=5, pady=5)
+
+        # Button to start the scanning process
+        scan_button = ttk.Button(button_frame, text="Scan Folder", command=self.start_scan_thread)
+        scan_button.grid(row=1, column=1, padx=5, pady=5)
+
+        # Checkbox to decide whether to convert unsupported files
+        convert_checkbox = ttk.Checkbutton(
+            button_frame, text="Convert Unsupported Files", variable=self.convert_unsupported
+        )
+        convert_checkbox.grid(row=2, column=0, columnspan=2, pady=5)
+
+        # Button to show FFmpeg output window
+        output_button = ttk.Button(button_frame, text="Show FFmpeg Output", command=self.show_ffmpeg_output_window)
+        output_button.grid(row=3, column=0, columnspan=2, pady=5)
+
+        # Scrollable text widget for logging
+        self.text_widget = scrolledtext.ScrolledText(
+            frame, wrap=tk.WORD, bg="#B2DFDB", fg="black", state=tk.NORMAL, font=("Arial", 10)
+        )
+        self.text_widget.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
+
+        # Progress bar for file processing
+        self.progress_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate", length=400)
+        self.progress_bar.grid(row=3, column=0, pady=10)
+
+        # Configure text tags for styling
+        self.text_widget.tag_configure("error", foreground="#C62828")  # Dark Red
+        self.text_widget.tag_configure("success", foreground="#2E7D32")  # Dark Green
+        self.text_widget.tag_configure("info", foreground="#008B8B")  # Dark Cyan
+        self.text_widget.tag_configure("summary", foreground="#6A1B9A", font=("Arial", 12, "bold"))  # Purple
+        self.text_widget.tag_configure("complete", foreground="#2E7D32", font=("Arial", 12, "bold"))  # Dark Green
+        self.text_widget.tag_configure("convert", foreground="#EF6C00")  # Orange
+
+        self.root.protocol("WM_DELETE_WINDOW", self.cleanup)
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    PS3VideoConverter()
