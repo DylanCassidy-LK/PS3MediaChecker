@@ -13,17 +13,18 @@ class PS3VideoConverter:
         self.selected_folder = None
         self.output_window = None
         self.output_text = None
+        self.startup_failed = False
 
-      self.root = tk.Tk()
-        self.root.withdraw()  
-        
+        self.root = tk.Tk()
+        self.root.withdraw()
+
         self.convert_unsupported = tk.BooleanVar()
 
-       
         if not self.check_ffmpeg_installed():
-            self.root.destroy()  
+            self.startup_failed = True
+            self.root.destroy()
+            return
 
-       
         self.create_gui()
 
     def check_ffmpeg_installed(self):
